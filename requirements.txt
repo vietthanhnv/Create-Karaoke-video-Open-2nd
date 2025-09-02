@@ -1,0 +1,22 @@
+# Core GUI and Multimedia
+PyQt6>=6.5.0
+PyQt6-Qt6>=6.5.0
+
+# Graphics and Rendering
+PyOpenGL>=3.1.6
+PyOpenGL-accelerate>=3.1.6
+numpy>=1.21.0
+
+# Testing
+pytest>=7.0.0
+pytest-qt>=4.2.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+
+# Development Tools
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Optional: FFmpeg Python bindings (if needed)
+# ffmpeg-python>=0.2.0
