@@ -335,7 +335,8 @@ class TestSupportedExtensions:
         assert ".mp3" in extensions
         assert ".wav" in extensions
         assert ".aac" in extensions
-        assert len(extensions) == 3
+        assert ".flac" in extensions
+        assert len(extensions) == 4
     
     def test_get_supported_extensions_image(self):
         """Test getting supported image extensions."""

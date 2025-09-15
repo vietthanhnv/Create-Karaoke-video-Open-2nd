@@ -265,14 +265,15 @@ class AssParser:
             text = dialogue_data.get('Text', '').strip()
             
             # Parse karaoke timing from ASS text
-            clean_text, word_timings = self._parse_karaoke_timing(text, start_time, end_time, line_num)
+            clean_text, word_timings, has_karaoke = self._parse_karaoke_timing(text, start_time, end_time, line_num)
             
             subtitle_line = SubtitleLine(
                 start_time=start_time,
                 end_time=end_time,
                 text=clean_text,
                 style=dialogue_data.get('Style', 'Default'),
-                word_timings=word_timings
+                word_timings=word_timings,
+                has_karaoke_tags=has_karaoke
             )
             
             return subtitle_line
@@ -309,17 +310,18 @@ class AssParser:
         """Parse ASS boolean value (0 or -1)."""
         return value.strip() in ['-1', '1']
     
-    def _parse_karaoke_timing(self, text: str, line_start: float, line_end: float, line_num: int) -> Tuple[str, List[WordTiming]]:
+    def _parse_karaoke_timing(self, text: str, line_start: float, line_end: float, line_num: int) -> Tuple[str, List[WordTiming], bool]:
         """
         Parse karaoke timing from ASS text with \\k tags.
         
         ASS karaoke format: {\\k<duration>}word where duration is in centiseconds
         Example: {\\k25}Hello{\\k30}world -> "Hello" for 0.25s, "world" for 0.30s
+        Supports: \\k, \\K, \\kf variants
         """
         import re
         
-        # Regex to match karaoke timing tags with braces
-        karaoke_pattern = re.compile(r'\{\\k(\d+)\}')
+        # Regex to match karaoke timing tags with braces (supports k, K, kf variants)
+        karaoke_pattern = re.compile(r'\{[^}]*\\[kK]f?(\d+)[^}]*\}')
         
         # Find all karaoke timing tags
         timing_matches = list(karaoke_pattern.finditer(text))
@@ -330,7 +332,7 @@ class AssParser:
             clean_text = re.sub(r'\{[^}]*\}', '', text).strip()
             words = clean_text.split()
             if not words:
-                return clean_text, []
+                return clean_text, [], False
             
             # Distribute timing evenly across words
             total_duration = line_end - line_start
@@ -348,7 +350,7 @@ class AssParser:
                 word_timings.append(word_timing)
                 current_time += word_duration
             
-            return clean_text, word_timings
+            return clean_text, word_timings, False
         
         # Parse karaoke timing
         word_timings = []
@@ -361,7 +363,7 @@ class AssParser:
         for i, match in enumerate(timing_matches):
             # Get duration in centiseconds and convert to seconds
             duration_cs = int(match.group(1))
-            duration_s = duration_cs / 100.0
+            duration_s = max(duration_cs / 100.0, 0.01)  # Minimum 10ms duration
             
             # Find the word(s) after this timing tag
             tag_end = match.end()
@@ -380,14 +382,18 @@ class AssParser:
             if word_text:
                 clean_text_parts.append(word_text)
                 
-                # Create word timing
+                # Create word timing with minimum duration check
+                end_time = current_time + duration_s
+                if end_time <= current_time:
+                    end_time = current_time + 0.01  # Ensure positive duration
+                
                 word_timing = WordTiming(
                     word=word_text,
                     start_time=current_time,
-                    end_time=current_time + duration_s
+                    end_time=end_time
                 )
                 word_timings.append(word_timing)
-                current_time += duration_s
+                current_time = end_time
         
         # Join clean text
         clean_text = ' '.join(clean_text_parts)
@@ -401,7 +407,7 @@ class AssParser:
                 word_timing.start_time = line_start + (word_timing.start_time - line_start) * scale_factor
                 word_timing.end_time = word_timing.start_time + duration * scale_factor
         
-        return clean_text, word_timings
+        return clean_text, word_timings, True  # True indicates karaoke tags were found
     
     def _validate_subtitle_file(self, subtitle_file: SubtitleFile):
         """Validate the parsed subtitle file."""

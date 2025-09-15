@@ -138,12 +138,13 @@ class ExportConfiguration:
         """Convert to OpenGL export settings."""
         output_path = os.path.join(self.output_dir, self.filename)
         
-        # Map format to codec
-        codec_map = {
-            "MP4 (H.264)": "libx264",
-            "MP4 (H.265)": "libx265"
+        # Map format to codec and container format
+        format_map = {
+            "MP4 (H.264)": {"codec": "libx264", "container": "mp4"},
+            "MP4 (H.265)": {"codec": "libx265", "container": "mp4"}
         }
-        codec = codec_map.get(self.format, "libx264")
+        
+        format_info = format_map.get(self.format, {"codec": "libx264", "container": "mp4"})
         
         return ExportSettings(
             output_path=output_path,
@@ -151,7 +152,8 @@ class ExportConfiguration:
             height=self.height,
             fps=self.fps,
             bitrate=self.bitrate,
-            codec=codec,
+            codec=format_info["codec"],
+            container_format=format_info["container"],
             cleanup_temp=self.cleanup_temp
         )
 
@@ -951,6 +953,75 @@ class ExportManager(QObject):
             config.quality_preset = preset_name
         
         return config
+    
+    def get_supported_formats(self) -> List[str]:
+        """Get list of supported export formats."""
+        try:
+            import subprocess
+            
+            # Run FFmpeg to get supported formats
+            result = subprocess.run(
+                ['ffmpeg', '-formats'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                print(f"FFmpeg formats command failed: {result.stderr}")
+                return self._get_default_formats()
+            
+            formats = []
+            lines = result.stdout.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                # Look for lines that start with " E " (encoder/muxer) or "DE " (demuxer/encoder)
+                if line.startswith('E ') or line.startswith('DE '):
+                    # Extract format name (second column)
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        format_names = parts[1]  # May contain comma-separated formats
+                        
+                        # Handle comma-separated formats
+                        for fmt in format_names.split(','):
+                            fmt = fmt.strip()
+                            if fmt:
+                                # Map common formats to user-friendly names
+                                if fmt == 'mp4':
+                                    formats.extend(['MP4 (H.264)', 'MP4 (H.265)'])
+                                elif fmt == 'avi':
+                                    formats.append('AVI')
+                                elif fmt == 'mkv':
+                                    formats.append('MKV (Matroska)')
+                                elif fmt == 'mov':
+                                    formats.append('MOV (QuickTime)')
+                                elif fmt == 'webm':
+                                    formats.append('WebM')
+            
+            # Remove duplicates and sort
+            formats = sorted(list(set(formats)))
+            
+            # Ensure we have at least some basic formats
+            if not formats:
+                formats = self._get_default_formats()
+            
+            return formats
+            
+        except Exception as e:
+            print(f"Error getting supported formats: {e}")
+            return self._get_default_formats()
+    
+    def _get_default_formats(self) -> List[str]:
+        """Get default formats when FFmpeg detection fails."""
+        return [
+            'MP4 (H.264)',
+            'MP4 (H.265)', 
+            'AVI',
+            'MKV (Matroska)',
+            'MOV (QuickTime)',
+            'WebM'
+        ]
 
 
 if __name__ == "__main__":

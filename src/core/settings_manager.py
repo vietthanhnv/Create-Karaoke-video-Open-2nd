@@ -188,10 +188,15 @@ class SettingsManager(QObject):
         recent = self.get_recent_projects()
         
         # Create project entry
+        app_instance = QApplication.instance()
+        last_opened = "unknown"
+        if app_instance:
+            last_opened = app_instance.property("current_time") or "unknown"
+        
         project_entry = {
             "path": str(Path(project_path).resolve()),
             "name": project_name,
-            "last_opened": QApplication.instance().property("current_time") or "unknown"
+            "last_opened": last_opened
         }
         
         # Remove if already exists (to move to top)

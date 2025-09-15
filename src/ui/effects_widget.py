@@ -176,50 +176,7 @@ class EffectsWidget(QWidget):
         scroll_area.setWidget(self.params_container)
         params_layout.addWidget(scroll_area)
         
-        # Preview section
-        preview_group = QGroupBox("Real-time Preview")
-        preview_layout = QVBoxLayout(preview_group)
-        
-        # Preview controls
-        preview_controls = QHBoxLayout()
-        
-        self.preview_text_label = QLabel("Preview Text:")
-        preview_controls.addWidget(self.preview_text_label)
-        
-        self.preview_text_combo = QComboBox()
-        self.preview_text_combo.setEditable(True)
-        self.preview_text_combo.addItems([
-            "Sample Karaoke Text",
-            "Hello World",
-            "Text Effects",
-            "Preview Text"
-        ])
-        self.preview_text_combo.currentTextChanged.connect(self._schedule_preview_update)
-        preview_controls.addWidget(self.preview_text_combo)
-        
-        preview_layout.addLayout(preview_controls)
-        
-        # Preview display
-        self.preview_label = QLabel("Effect preview will appear here")
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setStyleSheet(
-            "background-color: #1a1a1a; "
-            "color: white; "
-            "padding: 30px; "
-            "border: 2px solid #444; "
-            "border-radius: 5px; "
-            "font-size: 18px; "
-            "font-weight: bold;"
-        )
-        self.preview_label.setMinimumHeight(120)
-        preview_layout.addWidget(self.preview_label)
-        
-        # Preview update button
-        self.update_preview_button = QPushButton("Update Preview")
-        self.update_preview_button.clicked.connect(self._update_preview)
-        preview_layout.addWidget(self.update_preview_button)
-        
-        params_layout.addWidget(preview_group)
+        # Note: Real-time preview removed - effects are shown directly in the main video preview
         
         parent_widget.addWidget(params_frame)
         
@@ -670,111 +627,28 @@ class EffectsWidget(QWidget):
             self._update_parameter(param_name, rgb_values)
     
     def _schedule_preview_update(self):
-        """Schedule a preview update with debouncing"""
+        """Schedule a preview update with debouncing - now updates main video preview"""
         self.preview_timer.start(300)  # 300ms delay
     
     def _update_preview(self):
-        """Update the effect preview"""
-        preview_text = self.preview_text_combo.currentText()
+        """Update the main video preview with current effects"""
+        # Effects are now applied directly to the main video preview
+        # This method triggers a refresh of the main preview
         
         # Get active effects from effects manager
         active_effects = self.effects_manager.get_active_effects()
         
-        if not active_effects:
-            # No effects - show plain text
-            self.preview_label.setText(preview_text)
-            self.preview_label.setStyleSheet(
-                "background-color: #1a1a1a; "
-                "color: white; "
-                "padding: 30px; "
-                "border: 2px solid #444; "
-                "border-radius: 5px; "
-                "font-size: 18px; "
-                "font-weight: bold;"
-            )
-        else:
-            # Apply effects to preview text
-            self._render_preview_with_effects(preview_text, active_effects)
+        # Emit signal to update main preview with current effects
+        # The main preview will handle rendering the effects
+        for layer in active_effects:
+            if layer.enabled:
+                self.effect_parameters_changed.emit(layer.effect.id, layer.effect.parameters)
     
     def _render_preview_with_effects(self, text: str, effects: list):
-        """Render preview text with applied effects"""
-        # Start with base styling
-        base_style = (
-            "background-color: #1a1a1a; "
-            "padding: 30px; "
-            "border: 2px solid #444; "
-            "border-radius: 5px; "
-            "font-size: 18px; "
-            "font-weight: bold;"
-        )
-        
-        # Build CSS effects based on active effects
-        text_effects = []
-        color = "white"
-        
-        for layer in effects:
-            if not layer.enabled:
-                continue
-                
-            effect = layer.effect
-            params = effect.parameters
-            
-            if effect.type == "glow":
-                # Simulate glow with text-shadow
-                glow_color = params.get('color', [1.0, 1.0, 0.0])
-                glow_rgb = f"rgb({int(glow_color[0]*255)}, {int(glow_color[1]*255)}, {int(glow_color[2]*255)})"
-                radius = params.get('radius', 5.0)
-                intensity = params.get('intensity', 0.8)
-                
-                # Create multiple shadows for glow effect
-                shadows = []
-                for i in range(1, int(radius) + 1):
-                    alpha = intensity * (1.0 - i / radius)
-                    shadows.append(f"0 0 {i}px {glow_rgb}")
-                
-                text_effects.append(f"text-shadow: {', '.join(shadows)};")
-            
-            elif effect.type == "outline":
-                # Simulate outline with text-stroke (webkit) or multiple shadows
-                outline_color = params.get('color', [0.0, 0.0, 0.0])
-                outline_rgb = f"rgb({int(outline_color[0]*255)}, {int(outline_color[1]*255)}, {int(outline_color[2]*255)})"
-                width = params.get('width', 2.0)
-                
-                # Use text-stroke for webkit browsers
-                text_effects.append(f"-webkit-text-stroke: {width}px {outline_rgb};")
-                
-                # Fallback with multiple shadows for other browsers
-                shadows = []
-                for x in range(-int(width), int(width) + 1):
-                    for y in range(-int(width), int(width) + 1):
-                        if x != 0 or y != 0:
-                            shadows.append(f"{x}px {y}px 0 {outline_rgb}")
-                
-                if shadows:
-                    text_effects.append(f"text-shadow: {', '.join(shadows)};")
-            
-            elif effect.type == "shadow":
-                # Add drop shadow
-                shadow_color = params.get('color', [0.0, 0.0, 0.0])
-                shadow_rgb = f"rgb({int(shadow_color[0]*255)}, {int(shadow_color[1]*255)}, {int(shadow_color[2]*255)})"
-                offset_x = params.get('offset_x', 3.0)
-                offset_y = params.get('offset_y', 3.0)
-                blur = params.get('blur_radius', 2.0)
-                opacity = params.get('opacity', 0.7)
-                
-                text_effects.append(f"text-shadow: {offset_x}px {offset_y}px {blur}px rgba({int(shadow_color[0]*255)}, {int(shadow_color[1]*255)}, {int(shadow_color[2]*255)}, {opacity});")
-            
-            elif effect.type == "color_transition":
-                # Use start color for static preview
-                start_color = params.get('start_color', [1.0, 1.0, 1.0])
-                color = f"rgb({int(start_color[0]*255)}, {int(start_color[1]*255)}, {int(start_color[2]*255)})"
-        
-        # Combine all effects
-        full_style = base_style + f"color: {color}; " + " ".join(text_effects)
-        
-        # Apply to preview label
-        self.preview_label.setStyleSheet(full_style)
-        self.preview_label.setText(text)
+        """Render preview text with applied effects - now handled by main preview"""
+        # This method is no longer needed as effects are rendered in the main video preview
+        # All effect rendering is handled by the OpenGL subtitle renderer
+        pass
     
     def load_project(self, project):
         """Load a project into the effects widget"""
@@ -785,8 +659,7 @@ class EffectsWidget(QWidget):
         self.effects_manager = EffectsManager()
         self._refresh_applied_effects()
         
-        # Update preview with default text
-        self._update_preview()
+        # No longer update preview here - effects are handled by main video preview
     
     # Public methods for external control
     def get_effects_manager(self) -> EffectsManager:

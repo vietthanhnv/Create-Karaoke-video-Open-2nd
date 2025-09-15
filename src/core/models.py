@@ -31,7 +31,8 @@ class AudioFormat(Enum):
     """Supported audio file formats."""
     MP3 = "mp3"
     WAV = "wav"
-    AAC = "aac"
+    FLAC = "flac"
+    AAC = "aac"  # Keep for backward compatibility
 
 
 class ImageFormat(Enum):
@@ -66,18 +67,34 @@ class VideoFile:
 @dataclass
 class AudioFile:
     """Represents an audio file with its metadata."""
-    path: str
+    path: str = ""
     duration: float = 0.0
-    format: str = ""
     sample_rate: int = 0
     channels: int = 0
-    bitrate: int = 0
+    format: str = ""
     file_size: int = 0
+    bitrate: int = 0
+    # New field for task requirements
+    file_path: str = ""
     
     def __post_init__(self):
         """Validate the audio file after initialization."""
+        # Handle both old and new field names
+        if self.path and not self.file_path:
+            self.file_path = self.path
+        elif self.file_path and not self.path:
+            self.path = self.file_path
+        
         if self.path:
             self.path = str(Path(self.path).resolve())
+            self.file_path = self.path
+        
+        if self.duration < 0:
+            raise ValueError("Duration cannot be negative")
+        if self.sample_rate < 0:
+            raise ValueError("Sample rate cannot be negative")
+        if self.channels < 0:
+            raise ValueError("Channels cannot be negative")
 
 
 @dataclass
@@ -110,6 +127,26 @@ class WordTiming:
 
 
 @dataclass
+class KaraokeTimingInfo:
+    """Represents karaoke timing information extracted from ASS tags."""
+    start_time: float
+    end_time: float
+    text: str
+    syllable_count: int = 0
+    syllable_timings: List[float] = field(default_factory=list)  # \k, \K, \kf timing data
+    style_overrides: str = ""
+    
+    def __post_init__(self):
+        """Validate karaoke timing information."""
+        if self.start_time < 0:
+            raise ValueError("Start time cannot be negative")
+        if self.end_time <= self.start_time:
+            raise ValueError("End time must be greater than start time")
+        if self.syllable_count < 0:
+            raise ValueError("Syllable count cannot be negative")
+
+
+@dataclass
 class SubtitleLine:
     """Represents a single subtitle line with timing and content."""
     start_time: float
@@ -117,6 +154,8 @@ class SubtitleLine:
     text: str
     style: str = "Default"
     word_timings: List['WordTiming'] = field(default_factory=list)
+    karaoke_data: Optional['KaraokeTimingInfo'] = None
+    has_karaoke_tags: bool = False  # Track if line was parsed from karaoke tags
     
     def __post_init__(self):
         """Validate subtitle line timing."""
@@ -124,6 +163,10 @@ class SubtitleLine:
             raise ValueError("Start time cannot be negative")
         if self.end_time <= self.start_time:
             raise ValueError("End time must be greater than start time")
+    
+    def has_karaoke_timing(self) -> bool:
+        """Check if this line has karaoke timing information."""
+        return self.karaoke_data is not None
     
     def get_active_words(self, current_time: float) -> List[str]:
         """Get words that should be highlighted at the current time."""
@@ -195,16 +238,37 @@ class SubtitleStyle:
 @dataclass
 class SubtitleFile:
     """Represents a subtitle file with its content and metadata."""
-    path: str
+    path: str = ""
     format: str = "ass"
     lines: List[SubtitleLine] = field(default_factory=list)
     styles: List[SubtitleStyle] = field(default_factory=list)
     file_size: int = 0
+    # New fields for task requirements
+    file_path: str = ""
+    line_count: int = 0
+    karaoke_data: List[KaraokeTimingInfo] = field(default_factory=list)
     
     def __post_init__(self):
         """Validate the subtitle file after initialization."""
+        # Handle both old and new field names
+        if self.path and not self.file_path:
+            self.file_path = self.path
+        elif self.file_path and not self.path:
+            self.path = self.file_path
+        
         if self.path:
             self.path = str(Path(self.path).resolve())
+            self.file_path = self.path
+        
+        if self.line_count < 0:
+            raise ValueError("Line count cannot be negative")
+        # Update line count based on actual lines
+        if self.lines:
+            self.line_count = len(self.lines)
+    
+    def has_karaoke_timing(self) -> bool:
+        """Check if this subtitle file contains karaoke timing information."""
+        return len(self.karaoke_data) > 0 or any(line.has_karaoke_timing() for line in self.lines)
 
 
 @dataclass
@@ -218,6 +282,39 @@ class Effect:
 
 
 @dataclass
+class EffectsConfig:
+    """Configuration for visual effects applied to subtitles."""
+    # Glow/Bloom effects
+    glow_enabled: bool = False
+    glow_intensity: float = 1.0
+    glow_radius: float = 5.0
+    glow_color: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])  # RGB
+    
+    # Particle system effects
+    particles_enabled: bool = False
+    particle_count: int = 50
+    particle_size: float = 2.0
+    particle_lifetime: float = 2.0
+    
+    # Text animation effects
+    text_animation_enabled: bool = False
+    scale_factor: float = 1.0
+    rotation_speed: float = 0.0
+    fade_duration: float = 0.5
+    
+    # Color transition effects
+    color_transition_enabled: bool = False
+    start_color: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])  # RGB
+    end_color: List[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])    # RGB
+    transition_speed: float = 1.0
+    
+    # Background blur effects
+    background_blur_enabled: bool = False
+    blur_radius: float = 5.0
+    blur_intensity: float = 1.0
+
+
+@dataclass
 class ExportSettings:
     """Represents export configuration settings."""
     resolution: Dict[str, int] = field(default_factory=lambda: {"width": 1920, "height": 1080})
@@ -227,6 +324,55 @@ class ExportSettings:
     frame_rate: float = 30.0
     audio_bitrate: int = 192  # kbps
     output_directory: str = "output"
+    # New fields for task requirements
+    output_width: int = 1920
+    output_height: int = 1080
+    output_fps: float = 30.0
+    codec: str = "h264"
+    output_format: str = "mp4"
+    
+    def __post_init__(self):
+        """Sync old and new field values."""
+        # Sync resolution with individual width/height
+        if self.resolution:
+            self.output_width = self.resolution.get("width", 1920)
+            self.output_height = self.resolution.get("height", 1080)
+        else:
+            self.resolution = {"width": self.output_width, "height": self.output_height}
+        
+        # Sync format fields
+        if self.format and not self.output_format:
+            self.output_format = self.format
+        elif self.output_format and not self.format:
+            self.format = self.output_format
+        
+        # Sync fps fields
+        if self.frame_rate != self.output_fps:
+            self.output_fps = self.frame_rate
+
+
+@dataclass
+class ProjectConfig:
+    """Main project configuration structure."""
+    audio_file: str = ""
+    subtitle_file: str = ""
+    background_image: str = ""
+    background_video: str = ""
+    config_file: str = ""
+    output_file: str = ""
+    width: int = 1920
+    height: int = 1080
+    fps: float = 30.0
+    duration: float = 0.0
+    
+    def __post_init__(self):
+        """Validate project configuration."""
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("Width and height must be positive")
+        if self.fps <= 0:
+            raise ValueError("FPS must be positive")
+        if self.duration < 0:
+            raise ValueError("Duration cannot be negative")
 
 
 @dataclass

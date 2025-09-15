@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QKeySequence, QAction
 
 from src.ui.import_widget import ImportWidget
-from src.ui.preview_widget import PreviewWidget
+from src.ui.detachable_preview_widget import DetachablePreviewWidget
 from src.ui.editor_widget import EditorWidget
 from src.ui.effects_widget import EffectsWidget
 from src.ui.export_widget import ExportWidget
@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         
         # Create workflow tabs
         self.import_widget = ImportWidget()
-        self.preview_widget = PreviewWidget()
+        self.preview_widget = DetachablePreviewWidget()
         self.editor_widget = EditorWidget()
         self.effects_widget = EffectsWidget()
         self.export_widget = ExportWidget()
@@ -77,6 +77,9 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.editor_widget, "3. Edit Subtitles")
         self.tab_widget.addTab(self.effects_widget, "4. Text Effects")
         self.tab_widget.addTab(self.export_widget, "5. Export Video")
+        
+        # Set up preview widget for detaching/merging
+        self.preview_widget.set_parent_tab_widget(self.tab_widget, 1, "2. Preview")
         
     def _setup_menu_bar(self):
         """Set up the application menu bar"""
@@ -162,6 +165,11 @@ class MainWindow(QMainWindow):
         self.effects_widget.effect_toggled.connect(self._on_effect_toggled)
         self.effects_widget.preset_applied.connect(self._on_preset_applied)
         
+        # Connect detachable preview signals
+        self.preview_widget.detach_requested.connect(self._on_preview_detached)
+        self.preview_widget.attach_requested.connect(self._on_preview_attached)
+        self.preview_widget.closed.connect(self._on_preview_closed)
+        
         # Connect preview playback controls
         self.preview_widget.play_requested.connect(self._on_preview_play)
         self.preview_widget.pause_requested.connect(self._on_preview_pause)
@@ -217,6 +225,9 @@ class MainWindow(QMainWindow):
                     self.editor_widget.load_project(project)
                 if hasattr(self.effects_widget, 'load_project'):
                     self.effects_widget.load_project(project)
+                # CRITICAL FIX: Load project into export widget
+                if hasattr(self.export_widget, 'load_project'):
+                    self.export_widget.load_project(project)
             else:
                 self.status_bar.showMessage("Failed to load project", 3000)
     
@@ -264,28 +275,12 @@ class MainWindow(QMainWindow):
     def _update_preview_effects(self, effect_id: str, parameters: dict):
         """Update preview with effect changes"""
         # This is called when effects parameters change
+        if hasattr(self.preview_widget, 'update_effect_parameters'):
+            self.preview_widget.update_effect_parameters(effect_id, parameters)
+        
+        # Force preview update to show effect changes
         if hasattr(self.preview_widget, 'synchronizer') and self.preview_widget.synchronizer:
-            # Force preview update to show effect changes
             self.preview_widget.synchronizer._update_sync()
-            self.preview_widget.load_project(project)
-        
-        # Load project into editor widget
-        if hasattr(self.editor_widget, 'load_project'):
-            self.editor_widget.load_project(project)
-        
-        # Load project into effects widget
-        if hasattr(self.effects_widget, 'load_project'):
-            self.effects_widget.load_project(project)
-        
-        # Load project into export widget
-        if hasattr(self.export_widget, 'load_project'):
-            self.export_widget.load_project(project)
-        
-        # Update status
-        self.status_bar.showMessage(f"Project loaded: {project.name}", 3000)
-        
-        # Switch to preview tab
-        self.tab_widget.setCurrentIndex(1)  # Preview tab
     
     def _on_export_completed(self, output_path):
         """Handle export completion"""
@@ -463,6 +458,18 @@ class MainWindow(QMainWindow):
     def get_settings_manager(self):
         """Get the settings manager instance"""
         return self.settings_manager
+    
+    def _on_preview_detached(self):
+        """Handle preview widget being detached"""
+        self.status_bar.showMessage("Preview detached to separate window", 2000)
+        
+    def _on_preview_attached(self):
+        """Handle preview widget being reattached"""
+        self.status_bar.showMessage("Preview reattached to main window", 2000)
+        
+    def _on_preview_closed(self):
+        """Handle preview widget being closed"""
+        self.status_bar.showMessage("Preview closed", 2000)
     
     def closeEvent(self, event):
         """Handle application close event with cleanup and state saving"""

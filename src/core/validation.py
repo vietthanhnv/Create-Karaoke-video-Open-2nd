@@ -51,7 +51,8 @@ class FileValidator:
     AUDIO_EXTENSIONS = {
         '.mp3': AudioFormat.MP3,
         '.wav': AudioFormat.WAV,
-        '.aac': AudioFormat.AAC
+        '.flac': AudioFormat.FLAC,
+        '.aac': AudioFormat.AAC  # Keep for backward compatibility
     }
     
     IMAGE_EXTENSIONS = {
@@ -71,7 +72,8 @@ class FileValidator:
     }
     
     AUDIO_MIME_TYPES = {
-        'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/vnd.dlna.adts'
+        'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/vnd.dlna.adts',
+        'audio/flac', 'audio/x-flac'
     }
     
     IMAGE_MIME_TYPES = {
@@ -288,16 +290,121 @@ class FileValidator:
         # Get file size
         file_size = Path(file_path).stat().st_size
         
+        # Count lines for basic metadata
+        line_count = 0
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                line_count = sum(1 for line in f if line.strip().startswith('Dialogue:'))
+        except Exception:
+            # If we can't count lines, that's okay - we'll set it to 0
+            pass
+        
         return SubtitleFile(
             path=file_path,
             format=cls.SUBTITLE_EXTENSIONS[extension].value,
-            file_size=file_size
+            file_size=file_size,
+            line_count=line_count
         )
+    
+    @classmethod
+    def extract_karaoke_timing(cls, file_path: str) -> List[Any]:
+        """
+        Extract karaoke timing information from ASS file.
+        
+        Args:
+            file_path: Path to the ASS file
+            
+        Returns:
+            List of KaraokeTimingInfo objects
+            
+        Raises:
+            ValidationError: If file cannot be processed
+        """
+        from .models import KaraokeTimingInfo
+        import re
+        
+        cls.validate_file_exists(file_path)
+        
+        karaoke_data = []
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            lines = content.split('\n')
+            events_section = False
+            
+            for line in lines:
+                if line.strip() == '[Events]':
+                    events_section = True
+                    continue
+                elif line.strip().startswith('[') and events_section:
+                    break
+                
+                if events_section and line.strip().startswith('Dialogue:'):
+                    # Parse dialogue line: Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+                    parts = line.split(',', 9)
+                    if len(parts) >= 10:
+                        try:
+                            start_time = cls._parse_ass_time(parts[1])
+                            end_time = cls._parse_ass_time(parts[2])
+                            text = parts[9]
+                            
+                            # Extract karaoke timing tags
+                            karaoke_patterns = [r'\\k\d+', r'\\K\d+', r'\\kf\d+']
+                            syllable_timings = []
+                            
+                            for pattern in karaoke_patterns:
+                                matches = re.findall(pattern, text)
+                                for match in matches:
+                                    timing_value = int(re.search(r'\d+', match).group())
+                                    syllable_timings.append(timing_value / 100.0)  # Convert centiseconds to seconds
+                            
+                            if syllable_timings:
+                                karaoke_info = KaraokeTimingInfo(
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    text=text,
+                                    syllable_count=len(syllable_timings),
+                                    syllable_timings=syllable_timings,
+                                    style_overrides=""
+                                )
+                                karaoke_data.append(karaoke_info)
+                        
+                        except (ValueError, IndexError):
+                            # Skip malformed lines
+                            continue
+            
+        except Exception as e:
+            raise ValidationError(f"Error extracting karaoke timing: {str(e)}")
+        
+        return karaoke_data
+    
+    @classmethod
+    def _parse_ass_time(cls, time_str: str) -> float:
+        """
+        Parse ASS time format (H:MM:SS.CC) to seconds.
+        
+        Args:
+            time_str: Time string in ASS format
+            
+        Returns:
+            Time in seconds as float
+        """
+        import re
+        
+        # ASS time format: H:MM:SS.CC
+        match = re.match(r'(\d+):(\d{2}):(\d{2})\.(\d{2})', time_str.strip())
+        if not match:
+            raise ValueError(f"Invalid ASS time format: {time_str}")
+        
+        hours, minutes, seconds, centiseconds = map(int, match.groups())
+        return hours * 3600 + minutes * 60 + seconds + centiseconds / 100.0
     
     @classmethod
     def _validate_ass_format(cls, file_path: str) -> None:
         """
-        Validate basic ASS subtitle file format.
+        Validate ASS subtitle file format and check for karaoke timing.
         
         Args:
             file_path: Path to the ASS file
@@ -317,12 +424,67 @@ class FileValidator:
                         f"Invalid ASS file: Missing required section '{section}'"
                     )
             
+            # Check for karaoke timing tags
+            cls._validate_karaoke_timing(content)
+            
         except UnicodeDecodeError:
             raise ValidationError(
                 "Invalid ASS file: File encoding is not UTF-8"
             )
         except Exception as e:
             raise ValidationError(f"Error reading ASS file: {str(e)}")
+    
+    @classmethod
+    def _validate_karaoke_timing(cls, content: str) -> None:
+        """
+        Validate karaoke timing tags in ASS content.
+        
+        Args:
+            content: ASS file content
+            
+        Raises:
+            ValidationError: If karaoke timing format is invalid
+        """
+        import re
+        
+        # Look for karaoke timing tags (\k, \K, \kf)
+        karaoke_patterns = [
+            r'\\k-?\d+',   # \k followed by optional minus and digits
+            r'\\K-?\d+',   # \K followed by optional minus and digits  
+            r'\\kf-?\d+'   # \kf followed by optional minus and digits
+        ]
+        
+        lines = content.split('\n')
+        events_section = False
+        karaoke_found = False
+        
+        for line_num, line in enumerate(lines, 1):
+            if line.strip() == '[Events]':
+                events_section = True
+                continue
+            elif line.strip().startswith('[') and events_section:
+                # End of Events section
+                break
+            
+            if events_section and line.strip().startswith('Dialogue:'):
+                # Check for karaoke timing in dialogue lines
+                for pattern in karaoke_patterns:
+                    if re.search(pattern, line):
+                        karaoke_found = True
+                        # Validate timing format
+                        matches = re.findall(pattern, line)
+                        for match in matches:
+                            timing_value = int(re.search(r'-?\d+', match).group())
+                            if timing_value < 0:
+                                raise ValidationError(
+                                    f"Invalid karaoke timing at line {line_num}: "
+                                    f"Timing value cannot be negative ({match})"
+                                )
+        
+        # Note: We don't require karaoke timing to be present, but if it is, it should be valid
+        if karaoke_found:
+            # Additional validation for karaoke timing consistency could be added here
+            pass
     
     @classmethod
     def validate_media_file(cls, file_path: str, expected_type: MediaType) -> Any:
@@ -387,6 +549,134 @@ class FileValidator:
         extension = cls.get_file_extension(file_path)
         supported_extensions = cls.get_supported_extensions(media_type)
         return extension in supported_extensions
+    
+    @classmethod
+    def validate_project_config(cls, config) -> List[ValidationResult]:
+        """
+        Validate a ProjectConfig object according to task requirements.
+        
+        Args:
+            config: ProjectConfig object to validate
+            
+        Returns:
+            List of ValidationResult objects
+        """
+        results = []
+        
+        # Validate audio file (required: MP3/WAV/FLAC for task requirements)
+        if config.audio_file:
+            try:
+                audio_file = cls.validate_audio_file(config.audio_file)
+                # For task requirements, only MP3/WAV/FLAC are supported
+                if audio_file.format not in ['mp3', 'wav', 'flac']:
+                    results.append(ValidationResult(
+                        level=ValidationLevel.WARNING,
+                        message=f"Audio format {audio_file.format} may not be optimal for karaoke video creation",
+                        suggestion="For best results, use MP3, WAV, or FLAC format"
+                    ))
+            except ValidationError as e:
+                results.append(ValidationResult(
+                    level=ValidationLevel.ERROR,
+                    message=f"Audio file validation failed: {str(e)}",
+                    suggestion="Check audio file path and format"
+                ))
+        else:
+            results.append(ValidationResult(
+                level=ValidationLevel.ERROR,
+                message="Audio file is required",
+                suggestion="Specify an audio file path"
+            ))
+        
+        # Validate subtitle file (required: .ass with karaoke timing)
+        if config.subtitle_file:
+            try:
+                subtitle_file = cls.validate_subtitle_file(config.subtitle_file)
+                if subtitle_file.format != 'ass':
+                    results.append(ValidationResult(
+                        level=ValidationLevel.ERROR,
+                        message=f"Unsupported subtitle format: {subtitle_file.format}",
+                        suggestion="Use ASS format with karaoke timing"
+                    ))
+                else:
+                    # Check for karaoke timing
+                    karaoke_data = cls.extract_karaoke_timing(config.subtitle_file)
+                    if not karaoke_data:
+                        results.append(ValidationResult(
+                            level=ValidationLevel.WARNING,
+                            message="No karaoke timing found in ASS file",
+                            suggestion="Add \\k, \\K, or \\kf timing tags for karaoke effects"
+                        ))
+            except ValidationError as e:
+                results.append(ValidationResult(
+                    level=ValidationLevel.ERROR,
+                    message=f"Subtitle file validation failed: {str(e)}",
+                    suggestion="Check subtitle file path and format"
+                ))
+        else:
+            results.append(ValidationResult(
+                level=ValidationLevel.ERROR,
+                message="Subtitle file is required",
+                suggestion="Specify an ASS subtitle file path"
+            ))
+        
+        # Validate optional background image (JPG/PNG/BMP)
+        if config.background_image:
+            try:
+                image_file = cls.validate_image_file(config.background_image)
+                if image_file.format not in ['jpg', 'png', 'bmp']:
+                    results.append(ValidationResult(
+                        level=ValidationLevel.ERROR,
+                        message=f"Unsupported background image format: {image_file.format}",
+                        suggestion="Use JPG, PNG, or BMP format"
+                    ))
+            except ValidationError as e:
+                results.append(ValidationResult(
+                    level=ValidationLevel.ERROR,
+                    message=f"Background image validation failed: {str(e)}",
+                    suggestion="Check background image path and format"
+                ))
+        
+        # Validate optional background video (MP4/MOV/AVI)
+        if config.background_video:
+            try:
+                video_file = cls.validate_video_file(config.background_video)
+                if video_file.format not in ['mp4', 'mov', 'avi']:
+                    results.append(ValidationResult(
+                        level=ValidationLevel.ERROR,
+                        message=f"Unsupported background video format: {video_file.format}",
+                        suggestion="Use MP4, MOV, or AVI format"
+                    ))
+            except ValidationError as e:
+                results.append(ValidationResult(
+                    level=ValidationLevel.ERROR,
+                    message=f"Background video validation failed: {str(e)}",
+                    suggestion="Check background video path and format"
+                ))
+        
+        # Validate that at least one background is provided
+        if not config.background_image and not config.background_video:
+            results.append(ValidationResult(
+                level=ValidationLevel.ERROR,
+                message="Either background image or background video is required",
+                suggestion="Specify either background_image or background_video"
+            ))
+        
+        # Validate dimensions and frame rate
+        if config.width <= 0 or config.height <= 0:
+            results.append(ValidationResult(
+                level=ValidationLevel.ERROR,
+                message="Width and height must be positive",
+                suggestion="Set valid width and height values"
+            ))
+        
+        if config.fps <= 0:
+            results.append(ValidationResult(
+                level=ValidationLevel.ERROR,
+                message="FPS must be positive",
+                suggestion="Set a valid frame rate (e.g., 30.0)"
+            ))
+        
+        return results
 
 
 def validate_project_requirements(project) -> List[str]:

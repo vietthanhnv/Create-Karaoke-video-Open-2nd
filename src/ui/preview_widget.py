@@ -254,6 +254,15 @@ class PreviewWidget(QWidget):
         self.current_project: Optional[Project] = None
         self.is_seeking = False  # Flag to prevent feedback loops
         
+        # Enhanced rendering pipeline integration
+        self.rendering_pipeline: Optional[Any] = None  # CompleteRenderingPipeline
+        self.frame_capture_enabled = False
+        self.quality_settings = {
+            'resolution_scale': 1.0,
+            'effects_quality': 'high',
+            'frame_rate_limit': 30.0
+        }
+        
         self._setup_ui()
         self._connect_synchronizer_signals()
         
@@ -436,6 +445,9 @@ class PreviewWidget(QWidget):
         success = self.synchronizer.load_project(project)
         
         if success:
+            # Initialize enhanced rendering pipeline if available
+            self._initialize_rendering_pipeline(project)
+            
             # Update UI to show project is loaded
             self.placeholder_label.hide()
             
@@ -541,4 +553,113 @@ class PreviewWidget(QWidget):
             # Set seeking flag to prevent feedback
             self.is_seeking = True
             self.synchronizer.seek_to_time(timestamp)
+            
+            # Also seek rendering pipeline if available
+            if self.rendering_pipeline:
+                self.rendering_pipeline.seek_to_time(timestamp)
+            
             self.is_seeking = False
+    
+    def _initialize_rendering_pipeline(self, project: Project):
+        """Initialize enhanced rendering pipeline for high-quality preview"""
+        try:
+            from src.core.complete_rendering_pipeline import create_preview_pipeline
+            
+            # Create preview-optimized pipeline
+            self.rendering_pipeline = create_preview_pipeline(
+                width=int(1920 * self.quality_settings['resolution_scale']),
+                height=int(1080 * self.quality_settings['resolution_scale'])
+            )
+            
+            # Initialize with project
+            success = self.rendering_pipeline.initialize(project)
+            
+            if success:
+                # Connect pipeline signals
+                self.rendering_pipeline.preview_frame_ready.connect(self._on_pipeline_frame_ready)
+                self.rendering_pipeline.pipeline_failed.connect(self._on_pipeline_error)
+                
+                # Start preview mode
+                self.rendering_pipeline.start_rendering("", preview_mode=True)
+                
+                print("Enhanced rendering pipeline initialized for preview")
+            else:
+                print("Failed to initialize rendering pipeline, using fallback")
+                self.rendering_pipeline = None
+                
+        except Exception as e:
+            print(f"Error initializing rendering pipeline: {e}")
+            self.rendering_pipeline = None
+    
+    def _on_pipeline_frame_ready(self, frame: QImage, timestamp: float):
+        """Handle frame ready from enhanced rendering pipeline"""
+        if frame and not frame.isNull():
+            # Use high-quality frame from pipeline
+            self.opengl_widget.load_frame(frame)
+            self.placeholder_label.hide()
+    
+    def _on_pipeline_error(self, error_message: str):
+        """Handle rendering pipeline errors"""
+        print(f"Rendering pipeline error: {error_message}")
+        # Fall back to basic synchronizer
+        self.rendering_pipeline = None
+    
+    def enable_frame_capture(self, enabled: bool):
+        """Enable/disable frame capture for export preview"""
+        self.frame_capture_enabled = enabled
+        
+        if self.rendering_pipeline:
+            # Configure pipeline for frame capture
+            if enabled:
+                print("Frame capture enabled for preview")
+            else:
+                print("Frame capture disabled for preview")
+    
+    def set_quality_settings(self, settings: dict):
+        """Update preview quality settings"""
+        self.quality_settings.update(settings)
+        
+        # Reinitialize pipeline if settings changed significantly
+        if self.rendering_pipeline and self.current_project:
+            resolution_changed = (
+                'resolution_scale' in settings and 
+                settings['resolution_scale'] != self.quality_settings.get('resolution_scale', 1.0)
+            )
+            
+            if resolution_changed:
+                print("Reinitializing pipeline due to resolution change")
+                self.rendering_pipeline.cleanup()
+                self._initialize_rendering_pipeline(self.current_project)
+    
+    def get_performance_stats(self) -> dict:
+        """Get preview performance statistics"""
+        stats = {
+            'synchronizer_stats': {},
+            'pipeline_stats': {},
+            'opengl_stats': {}
+        }
+        
+        # Get synchronizer stats
+        if self.synchronizer:
+            stats['synchronizer_stats'] = self.synchronizer.get_performance_stats()
+        
+        # Get pipeline stats
+        if self.rendering_pipeline:
+            stats['pipeline_stats'] = self.rendering_pipeline.get_performance_stats()
+        
+        # Get OpenGL widget stats (if available)
+        if hasattr(self.opengl_widget, 'get_performance_stats'):
+            stats['opengl_stats'] = self.opengl_widget.get_performance_stats()
+        
+        return stats
+    
+    def cleanup_resources(self):
+        """Clean up preview resources"""
+        if self.rendering_pipeline:
+            self.rendering_pipeline.cleanup()
+            self.rendering_pipeline = None
+        
+        if self.synchronizer:
+            self.synchronizer.cleanup()
+        
+        self.opengl_widget.clear_frame()

@@ -420,15 +420,18 @@ class ImportWidget(QWidget):
                 if reply == QMessageBox.StandardButton.No:
                     return False
         
-        # Create project object (simplified for now)
-        project = type('Project', (), {
-            'name': 'Karaoke Project',
-            'video_file': self._imported_files.get('video'),
-            'image_file': self._imported_files.get('image'),
-            'audio_file': self._imported_files.get('audio'),
-            'subtitle_file': self._imported_files.get('subtitle'),
-            'files': self._imported_files.copy()
-        })()
+        # Create proper project object using the Project model
+        from src.core.models import Project
+        import uuid
+        
+        project = Project(
+            id=str(uuid.uuid4()),
+            name='Karaoke Project',
+            video_file=self._imported_files.get('video'),
+            image_file=self._imported_files.get('image'),
+            audio_file=self._imported_files.get('audio'),
+            subtitle_file=self._imported_files.get('subtitle')
+        )
         
         # Emit project loaded signal
         self.project_loaded.emit(project)

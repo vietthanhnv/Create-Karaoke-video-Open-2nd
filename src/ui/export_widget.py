@@ -224,7 +224,7 @@ class ExportWidget(QWidget):
         # Update UI controls
         self.width_spinbox.setValue(config.width)
         self.height_spinbox.setValue(config.height)
-        self.bitrate_spinbox.setValue(config.bitrate)
+        self.bitrate_spinbox.setValue(config.bitrate // 1000)  # Convert kbps to Mbps for display
         
     def _browse_output_directory(self):
         """Browse for output directory"""
@@ -271,7 +271,7 @@ class ExportWidget(QWidget):
         return ExportConfiguration(
             width=self.width_spinbox.value(),
             height=self.height_spinbox.value(),
-            bitrate=self.bitrate_spinbox.value(),
+            bitrate=self.bitrate_spinbox.value() * 1000,  # Convert Mbps to kbps
             output_dir=self.output_dir_edit.text(),
             filename=self.filename_edit.text(),
             format=self.format_combo.currentText(),
@@ -314,11 +314,11 @@ class ExportWidget(QWidget):
         elapsed = progress_info.get('elapsed_time', 0)
         remaining = progress_info.get('estimated_remaining', 0)
         
-        # Update progress bar
-        self.progress_bar.setValue(progress_percent)
+        # Update progress bar (convert float to int)
+        self.progress_bar.setValue(int(progress_percent))
         
         # Update status display
-        if progress_percent % 10 == 0 or progress_percent >= 95:  # Update every 10% or near completion
+        if int(progress_percent) % 10 == 0 or progress_percent >= 95:  # Update every 10% or near completion
             self.status_display.append(f"Progress: {progress_percent}% - {status}")
             
             if fps > 0:
